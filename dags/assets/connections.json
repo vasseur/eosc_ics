@@ -1,0 +1,18 @@
+{
+    "xray":{
+        "target": {
+            "format": "jpg",
+            "orientation": 180,
+            "mode": "L"
+        },
+        "sites": {
+            "name": "ics",
+            "login": "XXXXXXXXXXX",
+            "password": "XXXXXXXXX",
+            "host": "serv-ics-ftp.igbmc.u-strasbg.fr",
+            "port": 21,
+            "directory": "xray",
+            "orientation": 90
+        }
+    }
+}
