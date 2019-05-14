@@ -2,7 +2,7 @@ import os
 import json
 import logging
 
-from typing import List
+from typing import List, Dict
 from airflow import settings
 from airflow.models import Connection
 
@@ -10,7 +10,34 @@ log = logging.getLogger(__name__)
 here = os.path.dirname(os.path.abspath(__file__))
 
 
-def create_connections():
+def _get_connection_data(
+    conn_id: str, workflow: str, entry: Dict, target: Dict
+) -> Dict:
+    """ Data to create Connections objects """
+
+    return dict(
+        conn_id=conn_id,
+        conn_type="FTP",
+        host=entry["host"],
+        login=entry["login"],
+        password=entry["password"],
+        port=entry["port"],
+        extra=json.dumps(
+            {
+                "source_directory": entry["directory"],
+                "source_orientation": entry["orientation"],
+                "source_colorscheme": entry["colorscheme"],
+                "target_format": target["format"],
+                "target_orientation": target["orientation"],
+                "target_mode": target["mode"],
+                "segmentize": target["segmentize"],
+                "collection": workflow,
+            }
+        ),
+    )
+
+
+def create_connections() -> None:
     """ Create entries in connection based on assets/connections.json.
         This is done once, at launch time.
         NB: should we move the data in a remote mongo ?
@@ -20,24 +47,12 @@ def create_connections():
     with open(os.path.join(here, "../assets/connections.json"), "r") as f:
         data = json.loads(f.read())
         for workflow in data:
+            target = data[workflow]["target"]
             for entry in data[workflow]["sites"]:
                 conn_id = "{}__{}".format(workflow, entry["name"])
                 session.query(Connection).filter_by(conn_id=conn_id).delete()
                 conn = Connection(
-                    conn_id=conn_id,
-                    conn_type="FTP",
-                    host=entry["host"],
-                    login=entry["login"],
-                    password=entry["password"],
-                    port=entry["port"],
-                    extra=json.dumps(
-                        {
-                            "source_directory": entry["directory"],
-                            "source_orientation": entry["orientation"],
-                            "target_format": data[workflow]["target"]["format"],
-                            "target_orientation": data[workflow]["target"]["orientation"],
-                            "target_colorscale": data[workflow]["target"]["colorscale"]
-                        }),
+                    **_get_connection_data(conn_id, workflow, entry, target)
                 )
                 session.add(conn)
     session.commit()
