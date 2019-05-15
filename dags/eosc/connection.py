@@ -10,9 +10,7 @@ log = logging.getLogger(__name__)
 here = os.path.dirname(os.path.abspath(__file__))
 
 
-def _get_connection_data(
-    conn_id: str, workflow: str, entry: Dict, target: Dict
-) -> Dict:
+def _get_connection_data(conn_id: str, workflow: str, entry: Dict) -> Dict:
     """ Data to create Connections objects """
 
     return dict(
@@ -25,12 +23,8 @@ def _get_connection_data(
         extra=json.dumps(
             {
                 "source_directory": entry["directory"],
-                "source_orientation": entry["orientation"],
-                "source_colorscheme": entry["colorscheme"],
-                "target_format": target["format"],
-                "target_orientation": target["orientation"],
-                "target_mode": target["mode"],
-                "segmentize": target["segmentize"],
+                "target_format": entry["target_format"],
+                "pipeline": entry["pipeline"],
                 "collection": workflow,
             }
         ),
@@ -47,13 +41,10 @@ def create_connections() -> None:
     with open(os.path.join(here, "../assets/connections.json"), "r") as f:
         data = json.loads(f.read())
         for workflow in data:
-            target = data[workflow]["target"]
-            for entry in data[workflow]["sites"]:
+            for entry in data[workflow]:
                 conn_id = "{}__{}".format(workflow, entry["name"])
                 session.query(Connection).filter_by(conn_id=conn_id).delete()
-                conn = Connection(
-                    **_get_connection_data(conn_id, workflow, entry, target)
-                )
+                conn = Connection(**_get_connection_data(conn_id, workflow, entry))
                 session.add(conn)
     session.commit()
 
@@ -65,7 +56,7 @@ def get_connections(collection: str) -> List[str]:
 
     session = settings.Session()
     return [
-        c.conn_id
+        c
         for c in session.query(Connection).filter(
             Connection.conn_id.ilike("{}__%s".format(collection))
         )

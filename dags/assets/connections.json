@@ -1,22 +1,26 @@
 {
-    "xray":{
-        "target": {
-            "format": "jpg",
-            "orientation": 180,
-            "mode": "gray",
-            "segmentize": true
-        },
-        "sites": [
-            {
-                "name": "ics",
-                "login": "europhenome",
-                "password": "XXXXXXXXX",
-                "host": "serv-ics-ftp.igbmc.u-strasbg.fr",
-                "port": 21,
-                "directory": "xray",
-                "orientation": 90,
-                "colorscheme": "white_on_black"
-            }
-        ]
-    }
+    "xray": [
+        {
+            "name": "ics",
+            "login": "europhenome",
+            "password": "XXXXXXXXX",
+            "host": "serv-ics-ftp.igbmc.u-strasbg.fr",
+            "port": 21,
+            "directory": "xray",
+            "pipeline": [
+                ["convert", {"mode": "gray"}],
+                ["segmentize",
+                    {
+                        "roi": [null, 400, 2700, null],
+                        "expand_horizontal": {"size": 2500, "direction": "right"},
+                        "expand_vertical": {"size": 1400, "direction": "both"}
+                    }
+                ],
+                ["rotate", {"angle": 90}],
+                ["invert", null],
+                ["resize", {"width": 600}]
+            ],
+            "target_format": "bmp"
+        }
+    ]
 }

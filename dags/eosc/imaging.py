@@ -4,7 +4,7 @@ import logging
 import numpy as np
 import cv2
 
-from typing import Dict
+from typing import Dict, Tuple
 from glob import glob
 from .connection import get_connection
 from . import const
@@ -14,7 +14,9 @@ from pymongo import MongoClient
 log = logging.getLogger(__name__)
 
 
-def rotate(image, angle):
+def rotate(image: np.ndarray, params: Dict) -> np.ndarray:
+
+    angle = params["angle"]
     # center
     (h, w) = image.shape[:2]
     (cX, cY) = (w / 2, h / 2)
@@ -38,12 +40,32 @@ def rotate(image, angle):
     return cv2.warpAffine(image, M, (nW, nH))
 
 
-def segmentize(image):
+def segmentize(image: np.ndarray, params: Dict) -> np.ndarray:
 
-    # grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # grayscale if required
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    except:
+        gray = image
+
+    h, w = image.shape[:2]
+    x1 = 0
+    y1 = 0
+    x2 = w
+    y2 = h
+
+    if "roi" in params:
+        # analyse only roi
+        x1, y1, x2, y2 = params["roi"]
+        x1 = x1 or 0
+        y1 = y1 or 0
+        x2 = x2 or w
+        y2 = y2 or h
+
+    roi = gray[y1 : y2, x1 : x2]
+
     # binary
-    ret, thresh = cv2.threshold(gray, 5, 255, cv2.THRESH_BINARY)
+    ret, thresh = cv2.threshold(roi, 5, 255, cv2.THRESH_BINARY)
     # dilation
     # kernel = np.ones((10, 1), np.uint8)
     # img_dilation = cv2.dilate(thresh, kernel, iterations=1)
@@ -52,36 +74,94 @@ def segmentize(image):
         thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
     # keep largest contour
-    rects = [cv2.boundingRect(ctr) for ctr in ctrs]
-    rects = sorted(rects, key=lambda x: x[2])
-    x, y, w, h = rects[-1]
-    return image[y : y + h, x : x + w]
+    ctr = sorted(ctrs, key = cv2.contourArea, reverse = True)[0]
+    xr, yr, wr, hr = cv2.boundingRect(ctr)
+
+    # take full image into account
+    xr += x1
+    yr += y1
+
+    # expand to keep same size for all images
+    if 'expand_horizontal' in params:
+        expand_h = params['expand_horizontal']["size"]
+        direction = params['expand_horizontal']["direction"]
+        delta = expand_h - wr
+        wr += delta
+        if direction == "left":
+            xr = max(xr - delta, 0)
+        elif direction == "right":
+            y2 = min(xr + wr, w)
+            xr = y2 - wr
+        elif direction == "both":
+            xr = max(xr - int(delta / 2), 0)
+    if 'expand_vertical' in params:
+        expand_v = params['expand_vertical']["size"]
+        direction = params['expand_vertical']["direction"]
+        delta = expand_v - hr
+        hr += delta
+        if direction == "top":
+            yr =max( yr - delta, 0)
+        elif direction == "both":
+            yr = max(yr - int(delta / 2), 0)
+
+    return image[yr : yr + hr, xr : xr + wr]
 
 
-def _process_image(im: np.ndarray, config: Dict) -> np.ndarray:
+def crop(image: np.ndarray, params: Dict) -> np.ndarray:
+
+    x1, y1, x2, y2 = params["area"]
+    h, w = image.shape[:2]
+    x1 = x1 or 0
+    x2 = x2 or w
+    y1 = y1 or 0
+    y2 = y2 or h
+    return image[y1:y2, x1:x2]
+
+
+def convert(image: np.ndarray, params: Dict) -> np.ndarray:
+
+    if params["mode"] == "gray":
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return image
+
+
+def invert(image: np.ndarray, params: Dict) -> np.ndarray:
+
+    return cv2.bitwise_not(image)
+
+
+def resize(image: np.ndarray, params: Dict) -> np.ndarray:
+
+    h, w = image.shape[:2]
+    if "ratio" in params:
+        ratio = params["ratio"]
+        w2, h2 = int(w * ratio), int(h * ratio)
+    elif "width" in params:
+        ratio = params["width"] / w
+        w2, h2 = params["width"], int(h * ratio)
+    elif "height" in params:
+        ratio = params["height"] / h
+        w2, h2 = int(w * ratio), params["height"]
+    return cv2.resize(image, (w2, h2), interpolation = cv2.INTER_AREA)
+
+
+def _process_image(image: np.ndarray, config: Dict) -> np.ndarray:
     """ Image tranformations
+
+        :param config: extra param in connection
     """
 
-    angle = config["target_orientation"] - config["source_orientation"]
-    if angle != 0:
-        log.info("rotation %s deg", angle)
-        im = rotate(im, angle)
+    for (name, params) in config["pipeline"]:
+        func = globals()[name]
+        log.info('%s with %s', name, str(params))
+        image = func(image, params)
+    return image
 
-    if config["source_colorscheme"] == "black_on_white":
-        log.info("inversing colorscheme %s", source)
-        im = cv2.bitwise_not(im)
 
-    # log.info('conversion to %s', config["target_mode"])
-    # im = im.convert(config["target_mode"])
+def get_image_as_array(filename: str) -> np.array:
 
-    if config["segmentize"]:
-        log.info("segmentize")
-        im = segmentize(im)
-
-    if config["target_mode"] == "gray":
-        im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-
-    return im
+    im = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+    return im.reshape(im.size)
 
 
 def process_specimen_files(conn_id, *args, **kwargs):
@@ -104,27 +184,11 @@ def process_specimen_files(conn_id, *args, **kwargs):
                 log.info("processing %s", source)
                 im = cv2.imread(source)
                 im = _process_image(im, config)
-                filename = "{}.{}".format(
-                    os.path.splitext(entry["image"])[0], config["target_format"]
-                )
+                basename = os.path.splitext(entry["image"])[0]
+                filename = "{}.{}".format(basename, config["target_format"])
                 log.info("writing %s", filename)
                 cv2.imwrite(os.path.join(processed_dir, filename), im)
-
                 # save in mongo
-                mongo_id = "{}_{}".format(
-                    os.path.splitext(entry["image"])[0], config["target_format"]
-                )
                 entry["processed"] = filename
-                db.find_one_and_update({"_id": mongo_id}, {"$set": entry}, upsert=True)
+                db.find_one_and_update({"_id": basename}, {"$set": entry}, upsert=True)
 
-
-"""
-Mongo:
-from pymongo import MongoClient
-c=MongoClient()
-c.database_names()
-c.xray.collection_names()
-c.xray.xray__ics
-len(list(c.xray.xray__ics.find()))
-c.xray.xray__ics.find_one({"_id": '43076_86819'})
-"""
