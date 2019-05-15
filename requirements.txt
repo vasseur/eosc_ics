@@ -3,3 +3,4 @@ airflow
 opencv-python
 pymongo
 numpy
+scikit-learn
